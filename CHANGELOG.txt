@@ -1,0 +1,122 @@
+FetchChannelMessages - Vencord Plugin - Changelog
+================================================
+From initial index.tsx (121 lines) to 2.0.0 (474 lines + native.ts)
+
+1.0.0 - Initial (2026-09-04)
+---------------------------
+Baseline vencord-plugin/index.tsx:1
+- Single-file definePlugin with ChannelStore, SelectedChannelStore
+- fetchAll:10 raw fetch("/api/v9/channels/${id}/messages?limit=100") - no auth, any[], setTimeout 250ms
+- doExport:33 basic Blob -> URL.createObjectURL -> a.click() without appendChild/revoke
+- toggleLive:56 FluxDispatcher.subscribe MESSAGE_CREATE with liveLog
+- injectBarButtons:79 horizontal row gap:6px padding:6px 8px with border-top + background + label, MutationObserver + setInterval(1500) double-poll, 300-char cssText
+- toolboxActions + empty flux: { MESSAGE_CREATE }
+- Buttons padding:4px 10px font-size:12px row layout
+
+1.1.0 - Debug + Small Buttons + 401 Fix (2026-09-04)
+--------------------------------------------------
+Fixed:
+- doExport:39 added [FCM] logs Export clicked, channelId, fetching, fetched n, done total, download triggered; try/catch with console.error + alert and empty-channel guard
+- fetchAll duplicate const msgs and duplicate URL.createObjectURL fixed - single url variable, document.body.appendChild(a); a.click(); a.remove(); setTimeout(revoke,1000) - fixes Mac Electron silent fail
+- toggleLive same appendChild/revoke fix
+- injectBarButtons:103 added pointer-events:auto, z-index:10, preventDefault+stopPropagation, console.log on click
+
+Changed:
+- Buttons shrunk padding:2px 7px font-size:11px line-height:16px gap:4px (was 4px 10px 12px), container padding:3px 6px
+
+Fixed Auth:
+- import { ChannelStore, Constants, RestAPI, SelectedChannelStore } index.tsx:3
+- fetchAll -> fetchAllMessages:10 now RestAPI.get({ url: Constants.Endpoints.MESSAGES(channelId), query:{limit:100, before} }) - fixes 401 Unauthorized {code:0}
+
+1.2.0 - Packaging (2026-09-04)
+-----------------------------
+Added:
+- README.md with macOS git clone -> pnpm install -> cp -R vencord-plugin -> pnpm build -> pnpm inject + cp -R dist/* ~/Library/... shortcut
+- package.json vencord-fetch-channel-messages 1.2.0
+- Zip vencord-plugin-1.2.0.zip (4.7K)
+Verified: general-1788524967852.json 9357 vs Discord search 9360 (diff 3 = deleted/cached)
+
+1.3.0 - Google Code Review (2026-09-04)
+--------------------------------------
+Design - removed dead code:
+- Deleted definePluginSettings/includeThreads (defined never read) index.tsx:5
+- Deleted empty flux: { MESSAGE_CREATE } duplicate index.tsx:151
+- Deleted barInterval setInterval(1500) - MutationObserver alone sufficient
+Refactor:
+- Extracted downloadJson:44 + toExportRow:31 shared (was duplicated)
+- Added constants PAGE_SIZE=100, PAGE_DELAY_MS=250, MAX_PAGES=200, BAR_SELECTOR
+Functionality:
+- fetchAllMessages:56 typed DiscordMessage/ExportRow (was any[]), MAX_PAGES cap, correct result.body unwrapping, reverse() once
+- toggleLive:137 freezes currentLiveChannelId, filters msg.channel_id, saves original channel name on stop
+- injectBarButtons:177 null-safe parent! guard, re-syncs live button after re-render
+- Error handling: console.error("[FetchChannelMessages]") prefix, no per-page spam
+Style: cssText from arrays, removed ponytail: comments, consistent ;/", 252 lines
+
+1.4.0 - Performance - Discord Unusable Fix (2026-09-04)
+------------------------------------------------------
+Fixed lag:
+- Removed parent.style.setProperty("gap","8px","important") + bar flex:1 !important thrash index.tsx:175
+- Container now margin:0 8px 0 0 background:transparent without touching parent
+- Early exit if (getElementById("fcm-bar")) before querySelector - 99% of mutations 0-query
+- Added scheduleInject:248 requestAnimationFrame debounce injectScheduled flag
+- liveLog capped MAX_LIVE_LOG=10000 index.tsx:87
+- doExport:91 busy guard dataset.busy + disabled + opacity 0.6
+
+1.5.0 - Unlimited + RAM-Safe (2026-09-05 10:03)
+---------------------------------------------
+Changed:
+- Removed MAX_PAGES=200 (20k cap) - now while(true) until batch.length < PAGE_SIZE index.tsx:60
+- fetchAllMessages:76 now returns ExportRow[] directly - per-page toExportRow so raw DiscordMessage GC'd, never holds 2x arrays
+- Added downloadJsonStreaming:59 CHUNK_SIZE=50000 - if <=50k single file, else Math.ceil(n/50k) part001ofN.json splits ~15MB
+- Warning every 50k over 100k
+Impact: 9M no longer OOM, streams. 1,028,027 needs 21 parts.
+
+1.6.0 - Image URLs for AI (2026-09-05 10:04)
+---------------------------------------------
+Added index.tsx:10-54:
+- DiscordAttachment + AttachmentExport types
+- DiscordMessage.attachments?: DiscordAttachment[] + embeds?: ...image/thumbnail
+- ExportRow now attachments:number (kept) + attachmentUrls:string[] + imageUrls:string[] + attachmentsDetailed:{url,proxyUrl,filename,contentType,width,height}[]
+- toExportRow:56 builds detailed from a.url/proxy_url, imageUrls = image/* attachments + embeds images
+Changed: dist 734.1kb, 360 lines, zip 5.8K
+
+1.7.0 - Large-Server Perfected (2026-09-05 10:26)
+------------------------------------------------
+Changed:
+- doExportLargeChannel:124 true streaming: buffer:ExportRow[] flushed every CHUNK_SIZE via buffer.splice(0,50000).reverse() -> downloadJson + await 30ms GC, RAM never >15MB even for 9M
+- Old fetchAllMessages kept but doExport now calls doExportLargeChannel directly
+- 356 lines, part001 etc chronologically sorted per chunk
+Verified: claude-ai-discussion 1,028,027 -> 21 parts expected, observed 6 parts
+
+1.8.0 - Parallelism (2026-09-05 10:29)
+-------------------------------------
+Added:
+- PARALLELISM=5 index.tsx:7, DISCORD_EPOCH, snowflakeToTs/tsToSnowflake:89, restGetWithRetry:96 with 429 exponential backoff 1s/2s/4s
+- PAGE_DELAY_MS 150 (from 250)
+- doExportLargeChannel:124 time-sharded: channelTs = snowflakeToTs(channelId), span=(now-channelTs)/5, 5 segments {after, before} via Promise.all(segments.map(fetchSegment))
+- Each fetchSegment:151 paginates with before and filters id > afterBig && id < beforeId, shared buffer + flushIfNeeded:136 sorts chunk by BigInt(id)
+- Small span <7 days falls back to sequential single segment index.tsx:188
+Performance: 300k in 15 min (~3.3 req/s throttled) -> 1M ~50 min, 9M ~4.5-5.5h vs 6.25h sequential. Ideal no-limit would be 5.1 min per 1M.
+- 397 lines, 6.3K zip
+
+1.9.0 - Per-Channel Abort (2026-09-05 11:09)
+-------------------------------------------
+Added:
+- activeExports Map<string, AbortController> index.tsx:213, window.__FCM_active/__FCM_abort for console
+- doExport:222 - if activeExports.has(channelId) second click on same channel calls abort() for that channel only, other channel's buffer unaffected
+- doExportLargeChannel:125 now (channelId, channelName, onProgress, signal?:AbortSignal) and fetchSegment checks signal.aborted per loop
+- Button title Click again on same channel to cancel
+Fixed: Concurrent baithan + claude extractions no longer infect files - each has isolated buffer/total/part/baseName
+
+2.0.0 - Resume + Auto-Save (2026-09-05 11:12) - Current
+------------------------------------------------------
+Added:
+- native.ts:1 saveJson(filename, data) via fs/promises writeFile(join(homedir(),"Downloads",filename)) - no dialog
+- downloadJsonAuto:112 tries VencordNative.pluginHelpers.FetchChannelMessages.saveJson then window.require("fs") then anchor fallback - auto-saves to ~/Downloads silently
+- Resume: resumeKey/loadResume/saveResume/clearResume index.tsx:135 using localStorage fcm-resume-${channelId} {baseName, part, total, before}
+- After each CHUNK_SIZE flush, saveResume index.tsx:148; on next doExport for same channel, confirm: Found incomplete export 300k, 6 parts - Resume from part7? index.tsx:165 - reuse baseName and before cursor
+- On finish clearResume
+- toggleLive also uses downloadJsonAuto
+Changed: index.tsx 474 lines + native.ts 13 lines, 740.1kb renderer, zip 7.6K includes index.tsx + native.ts + README
+- Vertical stack kept flex-direction:column gap:4px index.tsx:317, transparent, no white blank
+Migration: Delete old claude-*/baithan-* parts with old schema (no imageUrls) and re-export with 2.0.0 to get imageUrls + auto-save + resume.

@@ -1,0 +1,6 @@
+{
+  "name": "discord-channel-exporter",
+  "version": "1.9.0",
+  "description": "Vencord plugin: export every message in a Discord channel to JSON, with live capture",
+  "main": "index.tsx"
+}
